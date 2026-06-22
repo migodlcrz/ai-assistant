@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..tracing.call_graph import CallRelationship
 
 
 @dataclass
@@ -235,3 +238,143 @@ def chunk_file(path: Path, root: Path, language: str) -> list[Chunk]:
             ))
 
     return chunks
+
+
+# --------------------------------------------------------------------------- #
+# Call graph extraction
+# --------------------------------------------------------------------------- #
+
+def _collect_calls_python(node, source: bytes) -> list[str]:
+    """Walk an AST node and return all called identifiers (Python)."""
+    calls: list[str] = []
+
+    def walk(n):
+        if n.type == "call":
+            func_node = n.child_by_field_name("function")
+            if func_node is not None:
+                name = _call_name_python(func_node, source)
+                if name:
+                    calls.append(name)
+        for child in n.children:
+            walk(child)
+
+    walk(node)
+    return calls
+
+
+def _call_name_python(node, source: bytes) -> str:
+    """Extract a qualified call name from a Python call's function node."""
+    if node.type == "identifier":
+        return _decode(node.text)
+    if node.type == "attribute":
+        obj = node.child_by_field_name("object")
+        attr = node.child_by_field_name("attribute")
+        if obj is not None and attr is not None:
+            obj_name = _decode(obj.text).split("(")[0]
+            attr_name = _decode(attr.text)
+            return f"{obj_name}.{attr_name}"
+    return ""
+
+
+def _collect_calls_js_ts(node, source: bytes) -> list[str]:
+    """Walk an AST node and return all called identifiers (JS/TS)."""
+    calls: list[str] = []
+
+    def walk(n):
+        if n.type == "call_expression":
+            func_node = n.child_by_field_name("function")
+            if func_node is not None:
+                name = _call_name_js_ts(func_node, source)
+                if name:
+                    calls.append(name)
+        for child in n.children:
+            walk(child)
+
+    walk(node)
+    return calls
+
+
+def _call_name_js_ts(node, source: bytes) -> str:
+    if node.type == "identifier":
+        return _decode(node.text)
+    if node.type == "member_expression":
+        obj = node.child_by_field_name("object")
+        prop = node.child_by_field_name("property")
+        if obj is not None and prop is not None:
+            obj_name = _decode(obj.text).split("(")[0]
+            prop_name = _decode(prop.text)
+            return f"{obj_name}.{prop_name}"
+    return ""
+
+
+def _decode(val) -> str:
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="replace")
+    return str(val) if val is not None else ""
+
+
+def extract_call_relationships(
+    path: Path, root: Path, language: str
+) -> tuple[list[CallRelationship], list[tuple[str, str, int]]]:
+    """
+    Return (relationships, locations).
+
+    relationships: caller→callee edges found in the file.
+    locations: (symbol, rel_path, start_line) for every defined symbol.
+    """
+    from ..tracing.call_graph import CallRelationship
+
+    rel_path = str(path.relative_to(root))
+    parser = _get_parser(language)
+    if parser is None:
+        return [], []
+
+    source_bytes = path.read_bytes()
+    tree = parser.parse(source_bytes)
+    root_node = tree.root_node
+
+    symbol_map = _SYMBOL_TYPES.get(language, {})
+    relationships: list[CallRelationship] = []
+    locations: list[tuple[str, str, int]] = []
+
+    if language == "python":
+        _collect_calls = _collect_calls_python
+    else:
+        _collect_calls = _collect_calls_js_ts
+
+    def visit(node, enclosing: str | None, depth: int):
+        node_type = node.type
+        sym_type = symbol_map.get(node_type)
+
+        if sym_type and depth <= 2:
+            name = _node_name(node, source_bytes)
+            qualified = (
+                f"{enclosing}.{name}"
+                if enclosing and sym_type == "function"
+                else name
+            )
+            start_line = node.start_point[0] + 1
+            locations.append((qualified, rel_path, start_line))
+
+            callees = _collect_calls(node, source_bytes)
+            for callee in callees:
+                # Normalize self.method → EnclosingClass.method when inside a class
+                if callee.startswith("self.") and enclosing:
+                    callee = f"{enclosing}.{callee[5:]}"
+                if callee and callee != qualified:
+                    relationships.append(
+                        CallRelationship(
+                            caller=qualified,
+                            callee=callee,
+                            file_path=rel_path,
+                        )
+                    )
+            new_enclosing = name if sym_type == "class" else enclosing
+            for child in node.children:
+                visit(child, new_enclosing, depth + 1)
+        else:
+            for child in node.children:
+                visit(child, enclosing, depth)
+
+    visit(root_node, None, 0)
+    return relationships, locations

@@ -33,5 +33,15 @@ src/repoask/providers/llm/openai.py
 src/repoask/retrieval/__init__.py
 src/repoask/retrieval/context_builder.py
 src/repoask/retrieval/retriever.py
+src/repoask/review/__init__.py
+src/repoask/review/reviewer.py
 src/repoask/store/__init__.py
 src/repoask/store/chroma.py
+src/repoask/testing/__init__.py
+src/repoask/testing/test_generator.py
+src/repoask/tracing/__init__.py
+src/repoask/tracing/call_graph.py
+src/repoask/tracing/entry_point_resolver.py
+src/repoask/tracing/graph_traverser.py
+src/repoask/tracing/side_effect_detector.py
+src/repoask/tracing/trace_formatter.py

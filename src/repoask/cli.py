@@ -50,6 +50,10 @@ def _history_db(config: RepoAskConfig, root: Path) -> Path:
     return root / config.store.path / "history.db"
 
 
+def _call_graph_db(config: RepoAskConfig, root: Path) -> Path:
+    return root / config.store.path / "call_graph.db"
+
+
 def _load_providers(config: RepoAskConfig):
     from .providers.embeddings.factory import create_embedding_provider
     from .providers.llm.factory import create_llm_provider
@@ -147,14 +151,16 @@ def index(
     config = load_config(root)
 
     from .ingestion.scanner import scan_files, LANGUAGE_EXTENSIONS
-    from .ingestion.chunker import chunk_file
+    from .ingestion.chunker import chunk_file, extract_call_relationships
     from .ingestion.tracker import FileTracker
     from .ingestion.repo_map import build_repo_map, REPO_MAP_FILE
     from .providers.embeddings.factory import create_embedding_provider
     from .store.chroma import VectorStore
+    from .tracing.call_graph import CallGraphStore
 
     tracker = FileTracker(_tracker_db(config, root))
     store = VectorStore(_store_dir(config, root))
+    call_graph = CallGraphStore(_call_graph_db(config, root))
 
     console.print(f"[dim]Scanning [bold]{root}[/bold]...[/dim]")
     all_files = scan_files(root, config.indexing)
@@ -167,6 +173,7 @@ def index(
     if deleted:
         for rel in deleted:
             store.delete_by_file(rel)
+            call_graph.delete_by_file(rel)
             tracker.remove(root / rel, root)
         console.print(f"[dim]Removed {len(deleted)} deleted file(s) from index[/dim]")
 
@@ -216,8 +223,20 @@ def index(
                 progress.advance(file_task)
                 continue
 
-            # Remove stale vectors for this file before upserting
-            store.delete_by_file(str(path.relative_to(root)))
+            # Remove stale vectors and call edges for this file before upserting
+            rel_str = str(path.relative_to(root))
+            store.delete_by_file(rel_str)
+            call_graph.delete_by_file(rel_str)
+
+            # Extract and store call relationships + symbol locations
+            try:
+                relationships, locations = extract_call_relationships(path, root, language)
+                if relationships:
+                    call_graph.upsert(relationships)
+                if locations:
+                    call_graph.upsert_locations(locations)
+            except Exception as e:
+                console.print(f"[yellow]Call graph warning for {path.relative_to(root)}: {e}[/yellow]")
 
             # Embed in batches
             for i in range(0, len(chunks), EMBED_BATCH):
@@ -381,6 +400,322 @@ def chat(
 
         console.print()
         console.rule()
+
+
+# --------------------------------------------------------------------------- #
+# review
+# --------------------------------------------------------------------------- #
+
+@app.command()
+def review(
+    base: Annotated[str, typer.Option("--base", help="Base branch to diff against")] = "main",
+    files: Annotated[Optional[str], typer.Option("--files", help="Comma-separated list of files to review (skips git detection)")] = None,
+):
+    """AI-powered review of all changed files in the current branch."""
+    root = _repo_root()
+    config = load_config(root)
+
+    from .review.reviewer import (
+        get_changed_files,
+        gather_file_context,
+        build_review_prompt,
+        parse_review_response,
+        format_report,
+    )
+    from .providers.llm.factory import create_llm_provider
+    from .providers.base import Message
+
+    # Detect changed files
+    if files:
+        changed = [f.strip() for f in files.split(",") if f.strip()]
+    else:
+        with console.status("[dim]Detecting changed files...[/dim]", spinner="dots"):
+            changed = get_changed_files(root, base)
+
+    if not changed:
+        console.print(f"[green]No changed files detected against [bold]{base}[/bold].[/green]")
+        raise typer.Exit(0)
+
+    console.print(f"\n[bold]Changed files ({len(changed)}):[/bold]")
+    for f in changed:
+        console.print(f"  [dim]-[/dim] {f}")
+    console.print()
+
+    # Load providers
+    store_dir = _store_dir(config, root)
+    store = None
+    retriever = None
+    call_graph = None
+
+    if store_dir.exists():
+        try:
+            from .providers.embeddings.factory import create_embedding_provider
+            from .retrieval.retriever import Retriever
+            from .store.chroma import VectorStore
+
+            with console.status("[dim]Loading embedding model...[/dim]", spinner="dots"):
+                embedder = create_embedding_provider(config.embedding)
+            store = VectorStore(store_dir)
+            retriever = Retriever(store, embedder)
+        except Exception as e:
+            console.print(f"[yellow]Warning: could not load vector store: {e}[/yellow]")
+
+    cg_db = _call_graph_db(config, root)
+    if cg_db.exists():
+        try:
+            from .tracing.call_graph import CallGraphStore
+            call_graph = CallGraphStore(cg_db)
+        except Exception:
+            pass
+
+    with console.status("[dim]Loading LLM...[/dim]", spinner="dots"):
+        llm = create_llm_provider(config.llm)
+
+    # Review each file
+    reviews = []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Reviewing files", total=len(changed))
+
+        for file_path in changed:
+            progress.update(task, description=f"Reviewing [bold]{file_path}[/bold]")
+
+            ctx = gather_file_context(
+                file_path=file_path,
+                repo_root=root,
+                base_branch=base,
+                store=store,
+                retriever=retriever,
+                call_graph=call_graph,
+            )
+
+            prompt = build_review_prompt(ctx)
+            messages = [
+                Message(role="system", content="You are a senior software engineer performing a thorough, repository-aware code review."),
+                Message(role="user", content=prompt),
+            ]
+
+            try:
+                response_text = llm.chat(messages, stream=False)
+            except Exception as e:
+                response_text = f"Summary:\nLLM error: {e}\n\nRisks:\nCould not complete review."
+
+            reviews.append(parse_review_response(file_path, response_text))
+            progress.advance(task)
+
+    report = format_report(changed, reviews)
+
+    console.print()
+    console.rule("[dim]Review Report[/dim]")
+    console.print()
+    console.print(report)
+    console.rule()
+
+
+# --------------------------------------------------------------------------- #
+# generate-test
+# --------------------------------------------------------------------------- #
+
+@app.command(name="generate-test")
+def generate_test(
+    base: Annotated[str, typer.Option("--base", help="Base branch to diff against")] = "main",
+    files: Annotated[Optional[str], typer.Option("--files", help="Comma-separated list of files to generate tests for")] = None,
+):
+    """Generate unit, integration, and flow-based tests for all changed files."""
+    root = _repo_root()
+    config = load_config(root)
+
+    from .review.reviewer import get_changed_files, gather_file_context
+    from .testing.test_generator import build_test_prompt, parse_test_response, format_test_report
+    from .providers.llm.factory import create_llm_provider
+    from .providers.base import Message
+
+    # Detect changed files
+    if files:
+        changed = [f.strip() for f in files.split(",") if f.strip()]
+    else:
+        with console.status("[dim]Detecting changed files...[/dim]", spinner="dots"):
+            changed = get_changed_files(root, base)
+
+    if not changed:
+        console.print(f"[green]No changed files detected against [bold]{base}[/bold].[/green]")
+        raise typer.Exit(0)
+
+    console.print(f"\n[bold]Changed files ({len(changed)}):[/bold]")
+    for f in changed:
+        console.print(f"  [dim]-[/dim] {f}")
+    console.print()
+
+    # Load providers
+    store_dir = _store_dir(config, root)
+    store = None
+    retriever = None
+    call_graph = None
+
+    if store_dir.exists():
+        try:
+            from .providers.embeddings.factory import create_embedding_provider
+            from .retrieval.retriever import Retriever
+            from .store.chroma import VectorStore
+
+            with console.status("[dim]Loading embedding model...[/dim]", spinner="dots"):
+                embedder = create_embedding_provider(config.embedding)
+            store = VectorStore(store_dir)
+            retriever = Retriever(store, embedder)
+        except Exception as e:
+            console.print(f"[yellow]Warning: could not load vector store: {e}[/yellow]")
+
+    cg_db = _call_graph_db(config, root)
+    if cg_db.exists():
+        try:
+            from .tracing.call_graph import CallGraphStore
+            call_graph = CallGraphStore(cg_db)
+        except Exception:
+            pass
+
+    with console.status("[dim]Loading LLM...[/dim]", spinner="dots"):
+        llm = create_llm_provider(config.llm)
+
+    # Generate tests for each file
+    plans = []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Generating tests", total=len(changed))
+
+        for file_path in changed:
+            progress.update(task, description=f"Generating tests for [bold]{file_path}[/bold]")
+
+            ctx = gather_file_context(
+                file_path=file_path,
+                repo_root=root,
+                base_branch=base,
+                store=store,
+                retriever=retriever,
+                call_graph=call_graph,
+            )
+
+            prompt = build_test_prompt(ctx)
+            messages = [
+                Message(role="system", content="You are a senior software engineer generating developer test cases for a code change. Use full repository context to reconstruct feature behavior and produce meaningful test scenarios."),
+                Message(role="user", content=prompt),
+            ]
+
+            try:
+                response_text = llm.chat(messages, stream=False)
+            except Exception as e:
+                response_text = f"Feature Summary:\nLLM error: {e}\n\nUnit Tests:\n- Could not generate tests."
+
+            plans.append(parse_test_response(file_path, response_text))
+            progress.advance(task)
+
+    report = format_test_report(changed, plans)
+
+    console.print()
+    console.rule("[dim]Generate Test Report[/dim]")
+    console.print()
+    console.print(report)
+    console.rule()
+
+
+# --------------------------------------------------------------------------- #
+# trace
+# --------------------------------------------------------------------------- #
+
+@app.command()
+def trace(
+    query: Annotated[Optional[str], typer.Argument(help="Symbol name, route, or natural-language description")] = None,
+    depth: Annotated[int, typer.Option("--depth", help="Maximum traversal depth")] = 8,
+    plain: Annotated[bool, typer.Option("--plain", help="Plain text output (no tree characters)")] = False,
+):
+    """Trace execution flow through the repository from a symbol or query."""
+    if not query:
+        query = Prompt.ask("[bold]Trace[/bold]")
+    if not query.strip():
+        err_console.print("[red]Query cannot be empty.[/red]")
+        raise typer.Exit(1)
+
+    root = _repo_root()
+    config = load_config(root)
+
+    cg_db = _call_graph_db(config, root)
+    if not cg_db.exists():
+        err_console.print(
+            "[red]No call graph found. Run [bold]repoask index[/bold] first.[/red]"
+        )
+        raise typer.Exit(1)
+
+    from .tracing.call_graph import CallGraphStore
+    from .tracing.entry_point_resolver import EntryPointResolver
+    from .tracing.graph_traverser import GraphTraverser
+    from .tracing.side_effect_detector import detect_side_effects
+    from .tracing.trace_formatter import format_trace
+
+    call_graph = CallGraphStore(cg_db)
+    stats = call_graph.stats()
+    if stats["edges"] == 0:
+        err_console.print(
+            "[yellow]Call graph is empty. Re-run [bold]repoask index[/bold] to populate it.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    # Build retriever for semantic fallback (optional — skip if store not present)
+    retriever = None
+    store_dir = _store_dir(config, root)
+    if store_dir.exists():
+        try:
+            from .providers.embeddings.factory import create_embedding_provider
+            from .retrieval.retriever import Retriever
+            from .store.chroma import VectorStore
+
+            with console.status("[dim]Loading embedding model...[/dim]", spinner="dots"):
+                embedder = create_embedding_provider(config.embedding)
+            store = VectorStore(store_dir)
+            retriever = Retriever(store, embedder)
+        except Exception:
+            pass  # degrade gracefully to graph-only resolution
+
+    resolver = EntryPointResolver(call_graph, retriever)
+    traverser = GraphTraverser(call_graph, max_depth=depth)
+
+    with console.status(f"[dim]Resolving entry point for: {query!r}[/dim]", spinner="dots"):
+        entry = resolver.resolve(query)
+
+    if entry is None:
+        err_console.print(
+            f"[red]Could not resolve an entry point for: {query!r}[/red]\n"
+            "[dim]Try using the exact symbol name (e.g. [bold]AuthController.login[/bold]) "
+            "or re-index with [bold]repoask index[/bold].[/dim]"
+        )
+        raise typer.Exit(1)
+
+    with console.status("[dim]Traversing call graph...[/dim]", spinner="dots"):
+        root_node = traverser.traverse(entry)
+        side_effects = detect_side_effects(root_node)
+
+    output = format_trace(
+        query=query,
+        entry=entry,
+        root=root_node,
+        side_effects=side_effects,
+        rich=not plain,
+    )
+
+    console.print()
+    console.rule("[dim]Trace[/dim]")
+    console.print()
+    console.print(output)
+    console.print()
+    console.rule()
 
 
 # --------------------------------------------------------------------------- #
