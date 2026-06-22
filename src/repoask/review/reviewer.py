@@ -60,16 +60,43 @@ def get_changed_files(repo_root: Path, base_branch: str = "main") -> list[str]:
         except Exception:
             return []
 
+    # Binary / compiled / generated file extensions
     _SKIP_SUFFIXES = {
         ".pyc", ".pyo", ".pyd", ".so", ".dylib", ".dll",
-        ".egg-info", ".lock", ".log",
+        ".egg-info", ".lock", ".log", ".whl", ".egg",
+        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".webp",
+        ".mp4", ".mp3", ".wav", ".pdf", ".zip", ".tar", ".gz",
+        ".map", ".min.js", ".min.css",
     }
-    _SKIP_FRAGMENTS = {"__pycache__", ".egg-info/", "node_modules/", ".DS_Store"}
+    # Config / infra / tooling files that carry no reviewable logic
+    _SKIP_EXACT = {
+        ".gitignore", ".gitattributes", ".editorconfig", ".prettierrc",
+        ".eslintrc", ".eslintignore", ".npmignore", ".npmrc", ".nvmrc",
+        ".env.example", ".env.sample", "Makefile", "Dockerfile",
+        "docker-compose.yml", "docker-compose.yaml",
+        ".dockerignore", "CODEOWNERS", "LICENCE", "LICENSE",
+        "CLAUDE.md",
+    }
+    # Path fragments that indicate non-source directories/files
+    _SKIP_FRAGMENTS = {
+        "__pycache__", ".egg-info/", "node_modules/", ".DS_Store",
+        "dist/", "build/", ".venv/", "venv/", ".git/",
+        "coverage/", ".nyc_output/", ".pytest_cache/",
+    }
+    # File suffixes considered non-source (config / docs / assets)
+    _SKIP_CONFIG_SUFFIXES = {
+        ".md", ".rst", ".txt", ".toml", ".ini", ".cfg", ".yaml",
+        ".yml", ".json", ".xml", ".csv", ".env",
+    }
 
     def _keep(path: str) -> bool:
         from pathlib import PurePosixPath
         p = PurePosixPath(path)
         if p.suffix in _SKIP_SUFFIXES:
+            return False
+        if p.suffix in _SKIP_CONFIG_SUFFIXES:
+            return False
+        if p.name in _SKIP_EXACT:
             return False
         if any(frag in path for frag in _SKIP_FRAGMENTS):
             return False

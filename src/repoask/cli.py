@@ -21,11 +21,28 @@ from .config.manager import (
 )
 from .config.schema import RepoAskConfig
 
+def _version_callback(value: bool):
+    if value:
+        from importlib.metadata import version
+        typer.echo(f"repoask {version('repoask')}")
+        raise typer.Exit()
+
+
 app = typer.Typer(
     name="repoask",
     help="AI-powered repository assistant. Ask questions about any codebase.",
     add_completion=False,
 )
+
+
+@app.callback()
+def _main(
+    version: Annotated[
+        Optional[bool],
+        typer.Option("--version", "-v", callback=_version_callback, is_eager=True, help="Show version and exit."),
+    ] = None,
+):
+    pass
 console = Console()
 err_console = Console(stderr=True)
 
