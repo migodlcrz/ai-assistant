@@ -139,6 +139,7 @@ def index(
     from .ingestion.scanner import scan_files, LANGUAGE_EXTENSIONS
     from .ingestion.chunker import chunk_file
     from .ingestion.tracker import FileTracker
+    from .ingestion.repo_map import build_repo_map, REPO_MAP_FILE
     from .providers.embeddings.factory import create_embedding_provider
     from .store.chroma import VectorStore
 
@@ -177,6 +178,7 @@ def index(
 
     EMBED_BATCH = 32
     total_chunks = 0
+    all_chunks_for_map: list = []
 
     with Progress(
         SpinnerColumn(),
@@ -218,8 +220,32 @@ def index(
                 except Exception as e:
                     console.print(f"[yellow]Embedding error for {path.relative_to(root)}: {e}[/yellow]")
 
+            all_chunks_for_map.extend(chunks)
             tracker.mark_indexed(path, root)
             progress.advance(file_task)
+
+    # Rebuild repo map from all currently indexed chunks (not just new ones)
+    with console.status("[dim]Building repo map...[/dim]", spinner="dots"):
+        try:
+            # Fetch existing chunks to include unchanged files in the map
+            existing = store._col.get(include=["metadatas"])
+            from .ingestion.chunker import Chunk as _Chunk
+            for meta in (existing["metadatas"] or []):
+                if meta.get("symbol_type") == "repo_map":
+                    continue
+                # Only add files not already covered by this run
+                if not any(c.file_path == meta["file_path"] for c in all_chunks_for_map):
+                    all_chunks_for_map.append(_Chunk(
+                        text="", file_path=meta["file_path"], language=meta["language"],
+                        symbol_name=meta["symbol_name"], symbol_type=meta["symbol_type"],
+                        start_line=meta["start_line"], end_line=meta["end_line"],
+                    ))
+            store.delete_by_file(REPO_MAP_FILE)
+            repo_map_chunk = build_repo_map(all_chunks_for_map, root)
+            repo_map_embedding = embedder.embed_one(repo_map_chunk.text)
+            store.upsert_chunks([repo_map_chunk], [repo_map_embedding])
+        except Exception as e:
+            console.print(f"[yellow]Warning: could not build repo map: {e}[/yellow]")
 
     stats = store.stats()
     console.print(

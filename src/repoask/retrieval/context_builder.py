@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+from ..ingestion.repo_map import REPO_MAP_FILE, REPO_MAP_SYMBOL
 from ..store.chroma import VectorStore
 
 
 _MAX_CONTEXT_CHARS = 12_000
 _DEPENDENCY_TOP_K = 3
+
+
+def _fetch_repo_map(store: VectorStore) -> dict | None:
+    try:
+        results = store._col.get(
+            where={"file_path": {"$eq": REPO_MAP_FILE}},
+            include=["documents", "metadatas"],
+        )
+        if results and results["documents"]:
+            return {
+                "text": results["documents"][0],
+                "metadata": results["metadatas"][0],
+            }
+    except Exception:
+        pass
+    return None
 
 
 def build_context(hits: list[dict], store: VectorStore, query: str) -> str:
@@ -21,7 +38,16 @@ def build_context(hits: list[dict], store: VectorStore, query: str) -> str:
     seen_ids: set[str] = set()
     primary_chunks: list[dict] = []
 
+    # Always inject the repo map first so the LLM has a bird's-eye view
+    repo_map = _fetch_repo_map(store)
+    if repo_map:
+        repo_map_block = f"### Repository Overview\n```\n{repo_map['text']}\n```"
+    else:
+        repo_map_block = None
+
     for hit in hits:
+        if hit["metadata"].get("file_path") == REPO_MAP_FILE:
+            continue
         chunk_id = hit["id"]
         if chunk_id not in seen_ids:
             seen_ids.add(chunk_id)
@@ -58,9 +84,13 @@ def build_context(hits: list[dict], store: VectorStore, query: str) -> str:
 
     all_chunks = primary_chunks + enrichment_chunks
 
-    # Build final context string
+    # Build final context string — repo map always goes first
     parts: list[str] = []
     total_chars = 0
+
+    if repo_map_block:
+        parts.append(repo_map_block)
+        total_chars += len(repo_map_block)
 
     for chunk in all_chunks:
         meta = chunk["metadata"]

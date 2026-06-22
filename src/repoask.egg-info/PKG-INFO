@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: repoask
-Version: 0.1.1
+Version: 0.1.2
 Summary: AI-powered repository assistant — ask questions about any codebase
 License: MIT
 Requires-Python: >=3.10
