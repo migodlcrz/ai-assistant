@@ -15,7 +15,24 @@ No server, no database setup. Everything is stored as local files inside your pr
 
 ## Installation
 
+RepoAsk is a CLI tool — install it with `pipx` so it gets its own isolated environment and is available system-wide.
+
 ```bash
+# Install pipx if you don't have it
+brew install pipx
+pipx ensurepath
+
+# Install repoask
+pipx install repoask
+```
+
+> **macOS / Homebrew users:** Do not use `pip install` directly — Homebrew manages its Python environment and will block it. `pipx` is the correct tool for installing Python CLI applications.
+
+**Alternative — manual venv (for development or local builds):**
+
+```bash
+python3 -m venv ~/.venvs/repoask
+source ~/.venvs/repoask/bin/activate
 pip install repoask
 ```
 
@@ -123,7 +140,7 @@ Displays the current global configuration with API keys masked.
 ### LLM
 | Provider | Example Models | Notes |
 |---|---|---|
-| `groq` | `llama3-8b-8192`, `mixtral-8x7b-32768` | Fast, free tier available |
+| `groq` | `llama-3.1-8b-instant`, `llama-3.3-70b-versatile` | Fast, free tier available |
 | `openai` | `gpt-4o-mini`, `gpt-4o` | Requires OpenAI API key |
 | `anthropic` | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6` | Requires Anthropic API key |
 
@@ -146,7 +163,7 @@ api_key = ""
 
 [llm]
 provider = "groq"
-model = "llama3-8b-8192"
+model = "llama-3.1-8b-instant"
 api_key = "gsk_..."
 temperature = 0.2
 max_tokens = 2048

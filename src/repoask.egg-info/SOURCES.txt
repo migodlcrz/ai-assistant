@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 src/repoask/__init__.py
 src/repoask/cli.py

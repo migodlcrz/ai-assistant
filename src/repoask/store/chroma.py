@@ -25,7 +25,10 @@ class VectorStore:
     # ------------------------------------------------------------------ #
 
     def _chunk_id(self, chunk: Chunk) -> str:
-        key = f"{chunk.file_path}:{chunk.start_line}:{chunk.end_line}:{chunk.symbol_name}"
+        # Include a text hash so two symbols with identical location metadata
+        # (e.g. export wrapper + inner declaration) still get unique IDs
+        text_hash = hashlib.sha256(chunk.text.encode()).hexdigest()[:8]
+        key = f"{chunk.file_path}:{chunk.start_line}:{chunk.end_line}:{chunk.symbol_name}:{text_hash}"
         return hashlib.sha256(key.encode()).hexdigest()[:32]
 
     def upsert_chunks(self, chunks: list[Chunk], embeddings: list[list[float]]) -> None:

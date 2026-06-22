@@ -105,7 +105,8 @@ _SYMBOL_TYPES: dict[str, dict[str, str]] = {
         "method_definition": "function",
         "lexical_declaration": "block",
         "variable_declaration": "block",
-        "export_statement": "block",
+        # export_statement intentionally excluded — it wraps the above node types
+        # and would produce duplicate chunks with identical line ranges
     },
     "typescript": {
         "function_declaration": "function",
@@ -118,7 +119,8 @@ _SYMBOL_TYPES: dict[str, dict[str, str]] = {
         "enum_declaration": "class",
         "lexical_declaration": "block",
         "variable_declaration": "block",
-        "export_statement": "block",
+        # export_statement intentionally excluded — it wraps the above node types
+        # and would produce duplicate chunks with identical line ranges
     },
 }
 

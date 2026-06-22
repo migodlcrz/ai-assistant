@@ -114,7 +114,7 @@ def init():
     console.print("  [dim]3[/dim] anthropic")
     llm_choice = Prompt.ask("Choose", choices=["1", "2", "3"], default="1")
     provider_map = {"1": "groq", "2": "openai", "3": "anthropic"}
-    default_models = {"groq": "llama3-8b-8192", "openai": "gpt-4o-mini", "anthropic": "claude-haiku-4-5-20251001"}
+    default_models = {"groq": "llama-3.1-8b-instant", "openai": "gpt-4o-mini", "anthropic": "claude-haiku-4-5-20251001"}
     config.llm.provider = provider_map[llm_choice]
     config.llm.model = Prompt.ask("Model", default=default_models[config.llm.provider])
     config.llm.api_key = Prompt.ask(f"{config.llm.provider.capitalize()} API key", password=True)
