@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repoask"
+version = "0.1.0"
+description = "AI-powered repository assistant — ask questions about any codebase"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    # CLI
+    "typer>=0.12",
+    "rich>=13",
+    # Config
+    "tomli>=2.0; python_version < '3.11'",
+    "tomli-w>=1.0",
+    "pydantic>=2",
+    # Parsing
+    "tree-sitter>=0.23",
+    "tree-sitter-python>=0.23",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
+    # Vector store
+    "chromadb>=0.5",
+    # Embeddings
+    "sentence-transformers>=3",
+    "openai>=1",
+    "anthropic>=0.28",
+    "groq>=0.9",
+    # Gitignore handling
+    "pathspec>=0.12",
+]
+
+[project.scripts]
+repoask = "repoask.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]

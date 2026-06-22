@@ -1,0 +1,206 @@
+# RepoAsk
+
+Ask questions about any codebase using AI. RepoAsk indexes your repository with a RAG pipeline — chunking code by AST symbols, embedding them locally, and answering questions with citations to exact file paths and line numbers.
+
+No server, no database setup. Everything is stored as local files inside your project.
+
+---
+
+## Requirements
+
+- Python 3.10+
+- An API key for at least one LLM provider (Groq, OpenAI, or Anthropic)
+
+---
+
+## Installation
+
+```bash
+pip install repoask
+```
+
+---
+
+## Quick Start
+
+**1. Configure your providers and API keys (once, globally)**
+
+```bash
+repoask init
+```
+
+This walks you through choosing an embedding provider and an LLM provider, then saves your config to `~/.repoask/config.toml`.
+
+**2. Index a repository**
+
+```bash
+cd /path/to/your/repo
+repoask index
+```
+
+RepoAsk scans all Python, JavaScript, and TypeScript files, extracts symbols (functions, classes, interfaces) using tree-sitter, generates embeddings, and stores everything locally under `.repoask/`.
+
+**3. Ask a question**
+
+```bash
+repoask ask "How does authentication work?"
+```
+
+Or start an interactive session:
+
+```bash
+repoask chat
+```
+
+---
+
+## Commands
+
+### `repoask init`
+Interactive setup wizard. Sets your embedding provider, LLM provider, models, and API keys. Saves to `~/.repoask/config.toml`.
+
+### `repoask index`
+Scans and indexes the current repository. Only re-indexes files that have changed since the last run (incremental by default).
+
+```bash
+repoask index           # incremental (default)
+repoask index --full    # force a complete re-index
+```
+
+### `repoask ask "<question>"`
+One-shot question. Retrieves relevant code chunks, builds context, and streams an answer.
+
+```bash
+repoask ask "Where is the database connection initialized?"
+repoask ask "What does the UserService class do?"
+repoask ask "How are API errors handled?" --top-k 15
+repoask ask "Show me all route handlers" --lang typescript
+```
+
+Options:
+- `--top-k N` — number of chunks to retrieve (default: 10)
+- `--lang LANG` — filter results to a specific language (`python`, `javascript`, `typescript`)
+
+### `repoask chat`
+Interactive multi-turn session. Maintains conversation context within the session and persists history to disk between sessions.
+
+```
+Commands inside chat:
+  /clear    clear the current session context
+  /quit     exit
+```
+
+Options:
+- `--top-k N` — number of chunks to retrieve per turn (default: 10)
+- `--no-history` — skip persisting this session to disk
+
+### `repoask status`
+Shows index statistics for the current repository.
+
+```
+Repository     /path/to/your/repo
+Index path     /path/to/your/repo/.repoask
+Embedding      huggingface / sentence-transformers/all-MiniLM-L6-v2
+LLM            groq / llama3-8b-8192
+Chunks         1,842
+Files indexed  74
+Last indexed   2026-06-22 14:30:01
+```
+
+### `repoask config`
+Displays the current global configuration with API keys masked.
+
+---
+
+## Supported Providers
+
+### Embedding
+| Provider | Models | Notes |
+|---|---|---|
+| `huggingface` | `sentence-transformers/all-MiniLM-L6-v2` (default) | Runs locally, no API key needed |
+| `openai` | `text-embedding-3-small`, `text-embedding-3-large` | Requires OpenAI API key |
+
+### LLM
+| Provider | Example Models | Notes |
+|---|---|---|
+| `groq` | `llama3-8b-8192`, `mixtral-8x7b-32768` | Fast, free tier available |
+| `openai` | `gpt-4o-mini`, `gpt-4o` | Requires OpenAI API key |
+| `anthropic` | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6` | Requires Anthropic API key |
+
+---
+
+## Configuration
+
+Config is stored in TOML format. RepoAsk merges two config files in order:
+
+1. **Global** `~/.repoask/config.toml` — API keys and provider defaults, shared across all repos
+2. **Per-repo** `.repoask/config.toml` — overrides for a specific project (optional)
+
+### Full config reference
+
+```toml
+[embedding]
+provider = "huggingface"
+model = "sentence-transformers/all-MiniLM-L6-v2"
+api_key = ""
+
+[llm]
+provider = "groq"
+model = "llama3-8b-8192"
+api_key = "gsk_..."
+temperature = 0.2
+max_tokens = 2048
+
+[indexing]
+ignore_patterns = [
+    ".git", "node_modules", "__pycache__", "dist", "build",
+    ".venv", "venv", "*.lock", "*.min.js", "*.min.css",
+    "*.pyc", ".DS_Store", "coverage", ".next", ".nuxt",
+]
+max_file_size_kb = 500
+languages = ["python", "javascript", "typescript"]
+
+[store]
+path = ".repoask"
+```
+
+---
+
+## Local Index Files
+
+When you run `repoask index`, a `.repoask/` directory is created inside your repository:
+
+```
+.repoask/
+├── chroma/        # vector store (ChromaDB, file-based)
+├── tracker.db     # file hash registry for incremental indexing (SQLite)
+└── history.db     # chat session history (SQLite)
+```
+
+No external database or server is required. Add `.repoask/` to your `.gitignore` to avoid committing the index.
+
+```bash
+echo ".repoask/" >> .gitignore
+```
+
+---
+
+## How It Works
+
+1. **Scan** — traverses the repository, respecting `.gitignore` and configured ignore patterns
+2. **Chunk** — parses each file with tree-sitter and extracts symbols (functions, classes, interfaces) as individual chunks instead of fixed token windows
+3. **Embed** — converts each chunk to a vector embedding using your configured provider
+4. **Store** — saves chunks + embeddings + metadata (file path, symbol name, line numbers) to a local ChromaDB collection
+5. **Retrieve** — when you ask a question, it embeds the question and finds the most similar chunks via cosine similarity
+6. **Build context** — enriches the top-K hits with import-referenced definitions and assembles a structured context block
+7. **Answer** — sends the context + question to your LLM with a prompt that requires citations and disallows hallucination
+
+---
+
+## Tips
+
+- Run `repoask index` after pulling new changes — it only re-embeds what changed.
+- Use `--lang` to narrow answers when you know which part of the stack is relevant.
+- Increase `--top-k` for broad architectural questions; lower it for specific function lookups.
+- HuggingFace embedding (`all-MiniLM-L6-v2`) is free and fast enough for most repos. Switch to `text-embedding-3-small` if you want higher retrieval quality on large codebases.
+- Groq is the recommended LLM provider for speed and cost — the free tier is sufficient for most usage.

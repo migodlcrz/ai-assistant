@@ -1,0 +1,22 @@
+Metadata-Version: 2.4
+Name: repoask
+Version: 0.1.0
+Summary: AI-powered repository assistant — ask questions about any codebase
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: typer>=0.12
+Requires-Dist: rich>=13
+Requires-Dist: tomli>=2.0; python_version < "3.11"
+Requires-Dist: tomli-w>=1.0
+Requires-Dist: pydantic>=2
+Requires-Dist: tree-sitter>=0.23
+Requires-Dist: tree-sitter-python>=0.23
+Requires-Dist: tree-sitter-javascript>=0.23
+Requires-Dist: tree-sitter-typescript>=0.23
+Requires-Dist: chromadb>=0.5
+Requires-Dist: sentence-transformers>=3
+Requires-Dist: openai>=1
+Requires-Dist: anthropic>=0.28
+Requires-Dist: groq>=0.9
+Requires-Dist: pathspec>=0.12
