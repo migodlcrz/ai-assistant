@@ -15,6 +15,7 @@ src/repoask/config/manager.py
 src/repoask/config/schema.py
 src/repoask/ingestion/__init__.py
 src/repoask/ingestion/chunker.py
+src/repoask/ingestion/repo_map.py
 src/repoask/ingestion/scanner.py
 src/repoask/ingestion/tracker.py
 src/repoask/providers/__init__.py
@@ -27,6 +28,7 @@ src/repoask/providers/llm/__init__.py
 src/repoask/providers/llm/anthropic.py
 src/repoask/providers/llm/factory.py
 src/repoask/providers/llm/groq.py
+src/repoask/providers/llm/ollama.py
 src/repoask/providers/llm/openai.py
 src/repoask/retrieval/__init__.py
 src/repoask/retrieval/context_builder.py

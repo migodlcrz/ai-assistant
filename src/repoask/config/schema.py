@@ -11,9 +11,10 @@ class EmbeddingConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    provider: Literal["groq", "openai", "anthropic"] = "groq"
-    model: str = "llama-3.1-8b-instant"
+    provider: Literal["groq", "openai", "anthropic", "ollama"] = "ollama"
+    model: str = "llama3.2"
     api_key: str = ""
+    base_url: str = "http://localhost:11434"
     temperature: float = 0.2
     max_tokens: int = 2048
 

@@ -112,12 +112,22 @@ def init():
     console.print("  [dim]1[/dim] groq      (fast, free tier available)")
     console.print("  [dim]2[/dim] openai")
     console.print("  [dim]3[/dim] anthropic")
-    llm_choice = Prompt.ask("Choose", choices=["1", "2", "3"], default="1")
-    provider_map = {"1": "groq", "2": "openai", "3": "anthropic"}
-    default_models = {"groq": "llama-3.1-8b-instant", "openai": "gpt-4o-mini", "anthropic": "claude-haiku-4-5-20251001"}
+    console.print("  [dim]4[/dim] ollama    (local, no API key required)")
+    llm_choice = Prompt.ask("Choose", choices=["1", "2", "3", "4"], default="4")
+    provider_map = {"1": "groq", "2": "openai", "3": "anthropic", "4": "ollama"}
+    default_models = {
+        "groq": "llama-3.1-8b-instant",
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-haiku-4-5-20251001",
+        "ollama": "llama3.2",
+    }
     config.llm.provider = provider_map[llm_choice]
     config.llm.model = Prompt.ask("Model", default=default_models[config.llm.provider])
-    config.llm.api_key = Prompt.ask(f"{config.llm.provider.capitalize()} API key", password=True)
+    if config.llm.provider == "ollama":
+        config.llm.base_url = Prompt.ask("Ollama base URL", default="http://localhost:11434")
+        config.llm.api_key = ""
+    else:
+        config.llm.api_key = Prompt.ask(f"{config.llm.provider.capitalize()} API key", password=True)
 
     save_global_config(config)
     console.print(f"\n[green]Config saved to {GLOBAL_CONFIG_FILE}[/green]")

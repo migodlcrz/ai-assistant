@@ -143,6 +143,7 @@ Displays the current global configuration with API keys masked.
 | `groq` | `llama-3.1-8b-instant`, `llama-3.3-70b-versatile` | Fast, free tier available |
 | `openai` | `gpt-4o-mini`, `gpt-4o` | Requires OpenAI API key |
 | `anthropic` | `claude-haiku-4-5-20251001`, `claude-sonnet-4-6` | Requires Anthropic API key |
+| `ollama` | `llama3.2`, `mistral`, `codellama` | Fully local, no API key, requires [Ollama](https://ollama.com) installed |
 
 ---
 
